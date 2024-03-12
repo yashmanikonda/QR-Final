@@ -10,17 +10,18 @@ QR-Final is a Go-based desktop application that generates QR codes for device id
 - Creates a Debug log to track program actions.
 
 ## Installation
-**1. Clone Repo and Navigate to project directory**
+**1. Clone Repo and Navigate to the project directory**
 
 **2. Initialize the Go module and download dependencies:**
-go mod tidy
+"go mod tidy"
 
 **3. Run the application:**
 go run main.go
+
 This command will generate a QR code based on the device ID and display it in a frameless window.
 
 **4. Optionally, build the executable:**
-go build main.go
+"go build main.go"
 
 **Configuration**
 Modify the regKeyPath and regValueName constants in main.go to match your specific registry key and value for the device ID.
