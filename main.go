@@ -1,0 +1,152 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/skip2/go-qrcode"
+	"github.com/therecipe/qt/core"
+	"github.com/therecipe/qt/gui"
+	"github.com/therecipe/qt/widgets"
+	"golang.org/x/sys/windows/registry"
+)
+
+const (
+	regKeyPath     = `Software\BioSecQRID`
+	regValueName   = "PlainText"
+	qrCodeFile     = "output_qr_code.png"
+	logFileName    = "QR_debug.log"
+	sleepDuration  = 30 * time.Second
+	updateInterval = 1 * time.Second
+)
+
+var exitChan = make(chan os.Signal, 1)
+
+func main() {
+
+	// Initialize the log file
+	logFile, err := os.Create(logFileName)
+	if err != nil {
+		log.Fatal("Error creating log file:", err)
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
+
+	// Set up signal handling for cleanup on program exit
+	signal.Notify(exitChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Set the countdown duration
+	duration := sleepDuration
+
+	// Read the device ID from the registry
+	deviceID, err := GetDeviceIDFromRegistry()
+	if err != nil {
+		log.Fatal("Error reading device ID from registry:", err)
+	}
+
+	// Generate the QR code
+	err = GenerateQRCode(deviceID, qrCodeFile)
+	if err != nil {
+		log.Fatal("Error generating QR code:", err)
+	}
+	fmt.Printf("QR code for Device ID '%s' has been generated and saved as '%s'.\n", deviceID, qrCodeFile)
+	log.Println("QR code generated.")
+
+	// Create and run the Qt application
+	widgetApp := widgets.NewQApplication(len(os.Args), os.Args)
+
+	// Create a main window
+	mainWindow := widgets.NewQMainWindow(nil, 0)
+	mainWindow.SetWindowTitle("QR Code Viewer")
+
+	// Remove the title bar
+	mainWindow.SetWindowFlags(core.Qt__FramelessWindowHint)
+
+	// Create a QLabel to display the image
+	imageLabel := widgets.NewQLabel2("", nil, 0)
+	pixmap := gui.NewQPixmap()
+	pixmap.Load(qrCodeFile, "", core.Qt__AutoColor)
+	imageLabel.SetPixmap(pixmap)
+
+	// Create a QLabel for the countdown timer
+	timerLabel := widgets.NewQLabel2("", nil, 0)
+
+	// Set up the main window layout
+	layout := widgets.NewQVBoxLayout()
+	layout.AddWidget(imageLabel, 0, 0)
+	layout.AddWidget(timerLabel, 0, 0) // Add the timer label below the image
+	widget := widgets.NewQWidget(nil, 0)
+	widget.SetLayout(layout)
+	mainWindow.SetCentralWidget(widget)
+
+	// Show the main window
+	mainWindow.Show()
+
+	// Start the countdown timer
+	go startCountdownTimer(timerLabel, mainWindow, duration)
+
+	// Run the application event loop
+	widgetApp.Exec()
+
+	// Cleanup when the application exits
+	cleanup()
+}
+
+func deleteQRCodeFile(filename string) {
+	// Delete the QR code file
+	err := os.Remove(filename)
+	if err != nil {
+		log.Println("Error deleting QR code file:", err)
+	} else {
+		log.Println("QR code file deleted.")
+	}
+}
+
+func cleanup() {
+	// Delete the QR code image on cleanup
+	deleteQRCodeFile(qrCodeFile)
+	log.Println("Application cleanup complete.")
+}
+
+func GetDeviceIDFromRegistry() (string, error) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regKeyPath, registry.READ)
+	if err != nil {
+		return "", err
+	}
+	defer k.Close()
+
+	deviceID, _, err := k.GetStringValue(regValueName)
+	if err != nil {
+		return "", err
+	}
+
+	return deviceID, nil
+}
+
+func GenerateQRCode(deviceID, filename string) error {
+	return qrcode.WriteFile(deviceID, qrcode.Low, 256, filename)
+}
+
+func startCountdownTimer(label *widgets.QLabel, window *widgets.QMainWindow, duration time.Duration) {
+	for remainingTime := duration; remainingTime > 0; remainingTime -= updateInterval {
+		time.Sleep(updateInterval)
+		updateTimerLabel(label, remainingTime)
+	}
+
+	updateTimerLabel(label, 0)
+
+	// Cleanup when the countdown timer reaches 0
+	cleanup()
+
+	window.Close()
+}
+
+func updateTimerLabel(label *widgets.QLabel, remainingTime time.Duration) {
+	seconds := int(remainingTime.Seconds())
+	timerText := fmt.Sprintf("Time remaining: %02d:%02d", seconds/60, seconds%60)
+	label.SetText(timerText)
+}
