@@ -27,7 +27,6 @@ const (
 var exitChan = make(chan os.Signal, 1)
 
 func main() {
-
 	// Initialize the log file
 	logFile, err := os.Create(logFileName)
 	if err != nil {
@@ -38,6 +37,19 @@ func main() {
 
 	// Set up signal handling for cleanup on program exit
 	signal.Notify(exitChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Run the application
+	runApplication()
+}
+
+func runApplication() {
+	// Check if the QR code file already exists, delete it if it does
+	if fileExists(qrCodeFile) {
+		err := deleteQRCodeFile(qrCodeFile)
+		if err != nil {
+			log.Fatal("Error deleting existing QR code file:", err)
+		}
+	}
 
 	// Set the countdown duration
 	duration := sleepDuration
@@ -59,26 +71,43 @@ func main() {
 	// Create and run the Qt application
 	widgetApp := widgets.NewQApplication(len(os.Args), os.Args)
 
+	// Get the screen geometry to calculate the center (primary screen)
+	screenGeometry := widgets.QApplication_Desktop().ScreenGeometry(-1)
+
 	// Create a main window
 	mainWindow := widgets.NewQMainWindow(nil, 0)
 	mainWindow.SetWindowTitle("QR Code Viewer")
 
 	// Remove the title bar
-	mainWindow.SetWindowFlags(core.Qt__FramelessWindowHint)
+	mainWindow.SetWindowFlags(core.Qt__FramelessWindowHint | core.Qt__WindowStaysOnTopHint)
+
+	// Calculate the position to center the window
+	windowWidth := 400  // Set your desired window width
+	windowHeight := 400 // Set your desired window height
+	screenCenter := screenGeometry.Center()
+	windowRect := core.NewQRect4(
+		screenCenter.X()-windowWidth/2,
+		screenCenter.Y()-windowHeight/2,
+		windowWidth,
+		windowHeight,
+	)
+	mainWindow.SetGeometry(windowRect)
 
 	// Create a QLabel to display the image
-	imageLabel := widgets.NewQLabel2("", nil, 0)
+	imageLabel := widgets.NewQLabel(nil, 0)
 	pixmap := gui.NewQPixmap()
 	pixmap.Load(qrCodeFile, "", core.Qt__AutoColor)
+	pixmap = pixmap.Scaled2(windowWidth, windowHeight, core.Qt__KeepAspectRatio, core.Qt__SmoothTransformation)
 	imageLabel.SetPixmap(pixmap)
 
 	// Create a QLabel for the countdown timer
-	timerLabel := widgets.NewQLabel2("", nil, 0)
+	timerLabel := widgets.NewQLabel(nil, 0)
+	timerLabel.SetAlignment(core.Qt__AlignCenter)
 
 	// Set up the main window layout
 	layout := widgets.NewQVBoxLayout()
-	layout.AddWidget(imageLabel, 0, 0)
-	layout.AddWidget(timerLabel, 0, 0) // Add the timer label below the image
+	layout.AddWidget(imageLabel, 0, core.Qt__AlignCenter)
+	layout.AddWidget(timerLabel, 0, core.Qt__AlignCenter) // Add the timer label below the image
 	widget := widgets.NewQWidget(nil, 0)
 	widget.SetLayout(layout)
 	mainWindow.SetCentralWidget(widget)
@@ -87,7 +116,7 @@ func main() {
 	mainWindow.Show()
 
 	// Start the countdown timer
-	go startCountdownTimer(timerLabel, mainWindow, duration)
+	go startCountdownTimer(timerLabel, duration, mainWindow)
 
 	// Run the application event loop
 	widgetApp.Exec()
@@ -96,18 +125,22 @@ func main() {
 	cleanup()
 }
 
-func deleteQRCodeFile(filename string) {
+func fileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return err == nil
+}
+
+func deleteQRCodeFile(filename string) error {
 	// Delete the QR code file
 	err := os.Remove(filename)
 	if err != nil {
-		log.Println("Error deleting QR code file:", err)
-	} else {
-		log.Println("QR code file deleted.")
+		return err
 	}
+	log.Println("QR code file deleted.")
+	return nil
 }
 
 func cleanup() {
-	// Delete the QR code image on cleanup
 	deleteQRCodeFile(qrCodeFile)
 	log.Println("Application cleanup complete.")
 }
@@ -131,7 +164,7 @@ func GenerateQRCode(deviceID, filename string) error {
 	return qrcode.WriteFile(deviceID, qrcode.Low, 256, filename)
 }
 
-func startCountdownTimer(label *widgets.QLabel, window *widgets.QMainWindow, duration time.Duration) {
+func startCountdownTimer(label *widgets.QLabel, duration time.Duration, mainWindow *widgets.QMainWindow) {
 	for remainingTime := duration; remainingTime > 0; remainingTime -= updateInterval {
 		time.Sleep(updateInterval)
 		updateTimerLabel(label, remainingTime)
@@ -139,10 +172,8 @@ func startCountdownTimer(label *widgets.QLabel, window *widgets.QMainWindow, dur
 
 	updateTimerLabel(label, 0)
 
-	// Cleanup when the countdown timer reaches 0
-	cleanup()
-
-	window.Close()
+	// Close the main window
+	mainWindow.Close()
 }
 
 func updateTimerLabel(label *widgets.QLabel, remainingTime time.Duration) {
